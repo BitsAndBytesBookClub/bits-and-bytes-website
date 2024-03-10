@@ -10,17 +10,11 @@ WORKDIR /bits-and-bytes-web
 # Copy the Cargo.toml and Cargo.lock files into the new project
 # This is a separate step so the dependencies will be cached unless
 # these files change.
-COPY ./Cargo.toml ./Cargo.lock ./
+COPY . .
 
 # Build only the dependencies to cache them
 RUN cargo build --release
-RUN rm src/*.rs
 
-# Copy the rest of your application's source code
-COPY ./src ./src
-
-# Build your application for release
-RUN cargo build --release
 
 # The final image will be based on the debian buster-slim image
 FROM debian:buster-slim
