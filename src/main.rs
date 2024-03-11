@@ -1,12 +1,20 @@
+use axum::handler::{HandlerService, HandlerWithoutStateExt};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::{routing::get, Router};
 use tokio::signal;
+use tower_http::services::ServeDir;
+use tower_http::set_status::SetStatus;
 use tracing::info;
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let app = Router::new().route("/", get(root));
+    let not_found_svc = not_found().await.into_service();
+    let root = ServeDir::new("assets").not_found_service(not_found_svc);
+
+    let app = Router::new().nest_service("/", root.clone());
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     info!("starting web server on port 3000...");
@@ -40,6 +48,6 @@ async fn shutdown_signal() {
     }
 }
 
-async fn root() -> &'static str {
-    "Hello, World!"
+async fn not_found() -> (StatusCode, &'static str) {
+    (StatusCode::NOT_FOUND, "Not found")
 }
