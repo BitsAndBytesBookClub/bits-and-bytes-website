@@ -95,7 +95,8 @@ async fn main() {
                         .map_err(|err| warn!("{}", err))
                         .unwrap(),
                 )
-                .allow_methods(Any),
+                .allow_methods(Any)
+                .allow_headers(Any),
         )
         .fallback_service(not_found_svc);
 
