@@ -1,8 +1,9 @@
 mod auth;
+mod cors;
 
 use crate::auth::Claims;
 use axum::handler::HandlerWithoutStateExt;
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode};
 use axum::response::sse::Event;
 use axum::response::Sse;
 use axum::routing::post;
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::{broadcast, Mutex};
 use tokio_stream::StreamExt;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tracing::info;
 
@@ -78,6 +80,15 @@ async fn main() {
         .route(
             "/current/meeting_info",
             get(move || meeting_info_handler(shared_db.clone())),
+        )
+        .layer(
+            CorsLayer::new()
+                .allow_origin(
+                    "https://www.bitsandbytesbooks.com"
+                        .parse::<HeaderValue>()
+                        .unwrap(),
+                )
+                .allow_methods(Any),
         )
         .fallback_service(not_found_svc);
 
