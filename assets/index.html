@@ -49,13 +49,28 @@
 <script>
     function meetingInfo() {
         return {
-            time: localStorage.getItem('meetingTime') || fetch("/current/meeting_info").then((data) => data.json().then((d) => d.time)),
-            day: localStorage.getItem('meetingDay') || fetch("/current/meeting_info").then((data) => data.json().then((d) => d.day)),
-            chapter: localStorage.getItem('meetingChapter') || fetch("/current/meeting_info").then((data) => data.json().then((d) => d.chapter)),
-            topic: localStorage.getItem('meetingTopic') || fetch("/current/meeting_info").then((data) => data.json().then((d) => d.topic)),
-            project: localStorage.getItem('meetingProject') || fetch("/current/meeting_info").then((data) => data.json().then((d) => d.project)),
+            time: localStorage.getItem('meetingTime') || fetch("/current/meeting_info").then((data) => data.json().then((d) => {
+                localStorage.setItem('meetingTime', d.time);
+                return d.time;
+            })),
+            day: localStorage.getItem('meetingDay') || fetch("/current/meeting_info").then((data) => data.json().then((d) => {
+                localStorage.setItem('meetingDay', d.day);
+                return d.day;
+            })),
+            chapter: localStorage.getItem('meetingChapter') || fetch("/current/meeting_info").then((data) => data.json().then((d) => {
+                localStorage.setItem('meetingChapter', d.chapter);
+                return d.chapter;
+            })),
+            topic: localStorage.getItem('meetingTopic') || fetch("/current/meeting_info").then((data) => data.json().then((d) => {
+                localStorage.setItem('meetingTopic', d.topic);
+                return d.topic;
+            })),
+            project: localStorage.getItem('meetingProject') || fetch("/current/meeting_info").then((data) => data.json().then((d) => {
+                localStorage.setItem('meetingTopic', d.project);
+                return d.project;
+            })),
             init() {
-                const eventSource = new EventSource("/events");
+                const eventSource = new EventSource("https://bits-and-bytes-website.onrender.com/events");
                 eventSource.onmessage = (event) => {
                     console.log("Event received:", event.data);
                     const [time, day, chapter, topic, project] = event.data.split("|");
