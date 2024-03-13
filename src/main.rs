@@ -105,6 +105,7 @@ async fn update_meeting_handler(
         .await
         .connect()
         .expect("could not connect to turso");
+
     conn.execute(
         "INSERT INTO times (time) VALUES (:time)",
         libsql::named_params! { ":time": time_update.time.clone() },
@@ -128,14 +129,14 @@ async fn update_meeting_handler(
 
     conn.execute(
         "INSERT INTO topics (topic) VALUES (:topic)",
-        libsql::named_params! { ":topic": time_update.day.clone() },
+        libsql::named_params! { ":topic": time_update.topic.clone() },
     )
     .await
     .unwrap();
 
     conn.execute(
         "INSERT INTO projects (project) VALUES (:project)",
-        libsql::named_params! { ":project": time_update.day.clone() },
+        libsql::named_params! { ":project": time_update.project.clone() },
     )
     .await
     .unwrap();
