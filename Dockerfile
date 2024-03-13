@@ -15,6 +15,8 @@ RUN cargo build --release
 
 FROM debian:buster-slim
 
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /bits-and-bytes-web/target/release/bits-and-bytes-web /usr/local/bin/bits-and-bytes-web
 COPY --from=builder /bits-and-bytes-web/assets /usr/local/assets
 
