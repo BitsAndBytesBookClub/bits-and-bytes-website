@@ -54,6 +54,7 @@ async fn main() {
         .map_err(|err| warn!("{}", err))
         .expect("cannot build db conn");
     let shared_db = Arc::new(Mutex::new(db));
+    info!("database remote connection established...");
 
     let not_found_svc = not_found().await.into_service();
     let root = ServeDir::new("assets").not_found_service(not_found_svc.clone());
@@ -63,6 +64,7 @@ async fn main() {
         .route(
             "/events",
             get({
+                info!("sending GET to /events");
                 let tx_clone = tx.clone();
                 move || {
                     let rx = tx_clone.subscribe();
@@ -73,6 +75,7 @@ async fn main() {
         .route(
             "/update/meeting_info",
             post({
+                info!("sending POST to /update/meeting_info");
                 let tx_clone = tx.clone();
                 let db_clone = shared_db.clone();
                 move |claims: Claims, Json(payload): Json<MeetingInfoJson>| {
@@ -189,6 +192,7 @@ async fn meeting_info_handler(db: Arc<Mutex<Database>>) -> Json<MeetingInfoJson>
     let mut data = conn
         .query("SELECT * FROM days ORDER BY ID DESC LIMIT 1;", ())
         .await
+        .map_err(|err| warn!("{}", err))
         .unwrap();
     let rows = data.next().await.unwrap().unwrap();
     let day = rows.get_str(1).unwrap().to_string();
@@ -196,6 +200,7 @@ async fn meeting_info_handler(db: Arc<Mutex<Database>>) -> Json<MeetingInfoJson>
     let mut data = conn
         .query("SELECT * FROM chapters ORDER BY ID DESC LIMIT 1;", ())
         .await
+        .map_err(|err| warn!("{}", err))
         .unwrap();
     let rows = data.next().await.unwrap().unwrap();
     let reading_assignment = rows.get_str(1).unwrap().to_string();
@@ -203,6 +208,7 @@ async fn meeting_info_handler(db: Arc<Mutex<Database>>) -> Json<MeetingInfoJson>
     let mut data = conn
         .query("SELECT * FROM topics ORDER BY ID DESC LIMIT 1;", ())
         .await
+        .map_err(|err| warn!("{}", err))
         .unwrap();
     let rows = data.next().await.unwrap().unwrap();
     let discussion_topic = rows.get_str(1).unwrap().to_string();
@@ -210,6 +216,7 @@ async fn meeting_info_handler(db: Arc<Mutex<Database>>) -> Json<MeetingInfoJson>
     let mut data = conn
         .query("SELECT * FROM projects ORDER BY ID DESC LIMIT 1;", ())
         .await
+        .map_err(|err| warn!("{}", err))
         .unwrap();
     let rows = data.next().await.unwrap().unwrap();
     let optional_projects = rows.get_str(1).unwrap().to_string();
@@ -232,6 +239,7 @@ async fn sse_handler(
             Ok(Event::default().data(msg.concatenated()))
         }
         Err(e) => {
+            warn!("error broadcasting message {}", e);
             eprintln!("broadcast channel error: {:?}", e);
             Err("error with data".to_string())
         }
