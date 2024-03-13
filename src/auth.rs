@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::error::Error;
 use std::str::FromStr;
+use tracing::warn;
 
 pub enum AuthError {
     MissingToken,
@@ -67,7 +68,8 @@ async fn parse_jwt(token: &str) -> Result<TokenData<Claims>, Box<dyn Error>> {
     let authority = std::env::var("AUTH0_ISSUER").unwrap();
     let jwks = fetch_jwks(&format!("{}.well-known/jwks.json", authority.as_str()))
         .await
-        .unwrap();
+        .map_err(|err| warn!("{}", err))
+        .expect("could not unwrap JWT token");
 
     let header = decode_header(token)?;
     let kid = match header.kid {

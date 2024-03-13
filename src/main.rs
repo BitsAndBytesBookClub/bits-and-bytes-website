@@ -17,7 +17,7 @@ use tokio::sync::{broadcast, Mutex};
 use tokio_stream::StreamExt;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct MeetingInfoJson {
@@ -48,7 +48,11 @@ async fn main() {
     let url = env::var("LIBSQL_URL").expect("LIBSQL_URL must be set");
     let token = env::var("LIBSQL_AUTH_TOKEN").unwrap_or_default();
 
-    let db = Builder::new_remote(url, token).build().await.unwrap();
+    let db = Builder::new_remote(url, token)
+        .build()
+        .await
+        .map_err(|err| warn!("{}", err))
+        .expect("cannot build db conn");
     let shared_db = Arc::new(Mutex::new(db));
 
     let not_found_svc = not_found().await.into_service();
@@ -85,6 +89,7 @@ async fn main() {
                 .allow_origin(
                     "https://www.bitsandbytesbooks.com"
                         .parse::<HeaderValue>()
+                        .map_err(|err| warn!("{}", err))
                         .unwrap(),
                 )
                 .allow_methods(Any),
@@ -96,6 +101,7 @@ async fn main() {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
+        .map_err(|err| warn!("{}", err))
         .unwrap();
 }
 
@@ -114,6 +120,7 @@ async fn update_meeting_handler(
         .lock()
         .await
         .connect()
+        .map_err(|err| warn!("{}", err))
         .expect("could not connect to turso");
 
     conn.execute(
@@ -121,6 +128,7 @@ async fn update_meeting_handler(
         libsql::named_params! { ":time": time_update.time.clone() },
     )
     .await
+    .map_err(|err| warn!("{}", err))
     .unwrap();
 
     conn.execute(
@@ -128,6 +136,7 @@ async fn update_meeting_handler(
         libsql::named_params! { ":day": time_update.day.clone() },
     )
     .await
+    .map_err(|err| warn!("{}", err))
     .unwrap();
 
     conn.execute(
@@ -135,6 +144,7 @@ async fn update_meeting_handler(
         libsql::named_params! { ":chapter": time_update.chapter.clone() },
     )
     .await
+    .map_err(|err| warn!("{}", err))
     .unwrap();
 
     conn.execute(
@@ -142,6 +152,7 @@ async fn update_meeting_handler(
         libsql::named_params! { ":topic": time_update.topic.clone() },
     )
     .await
+    .map_err(|err| warn!("{}", err))
     .unwrap();
 
     conn.execute(
@@ -149,10 +160,12 @@ async fn update_meeting_handler(
         libsql::named_params! { ":project": time_update.project.clone() },
     )
     .await
+    .map_err(|err| warn!("{}", err))
     .unwrap();
 
     let _ = tx
         .send(time_update)
+        .map_err(|err| warn!("{}", err))
         .expect("could not send payload via channel");
 
     StatusCode::CREATED
@@ -163,10 +176,12 @@ async fn meeting_info_handler(db: Arc<Mutex<Database>>) -> Json<MeetingInfoJson>
         .lock()
         .await
         .connect()
+        .map_err(|err| warn!("{}", err))
         .expect("could not connect to turso");
     let mut data = conn
         .query("SELECT * FROM times ORDER BY ID DESC LIMIT 1;", ())
         .await
+        .map_err(|err| warn!("{}", err))
         .unwrap();
     let rows = data.next().await.unwrap().unwrap();
     let time = rows.get_str(1).unwrap().to_string();
