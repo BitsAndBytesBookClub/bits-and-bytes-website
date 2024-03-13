@@ -8,11 +8,12 @@ use axum::response::Sse;
 use axum::routing::post;
 use axum::{routing::get, Json, Router};
 use futures::Stream;
-use libsql::{Builder, Connection};
+use libsql::{Builder, Database};
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::sync::Arc;
 use tokio::signal;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex};
 use tokio_stream::StreamExt;
 use tower_http::services::ServeDir;
 use tracing::info;
@@ -47,7 +48,7 @@ async fn main() {
     let token = env::var("LIBSQL_AUTH_TOKEN").unwrap_or_default();
 
     let db = Builder::new_remote(url, token).build().await.unwrap();
-    let conn = db.connect().unwrap();
+    let shared_db = Arc::new(Mutex::new(db));
 
     let not_found_svc = not_found().await.into_service();
     let root = ServeDir::new("assets").not_found_service(not_found_svc.clone());
@@ -68,15 +69,15 @@ async fn main() {
             "/update/meeting_info",
             post({
                 let tx_clone = tx.clone();
-                let conn_clone = conn.clone();
+                let db_clone = shared_db.clone();
                 move |claims: Claims, Json(payload): Json<MeetingInfoJson>| {
-                    update_meeting_handler(claims, payload, tx_clone.clone(), conn_clone.clone())
+                    update_meeting_handler(claims, payload, tx_clone.clone(), db_clone.clone())
                 }
             }),
         )
         .route(
             "/current/meeting_info",
-            get(move || meeting_info_handler(conn.clone())),
+            get(move || meeting_info_handler(shared_db.clone())),
         )
         .fallback_service(not_found_svc);
 
@@ -96,9 +97,14 @@ async fn update_meeting_handler(
     _claims: Claims,
     time_update: MeetingInfoJson,
     tx: broadcast::Sender<MeetingInfoJson>,
-    conn: Connection,
+    db: Arc<Mutex<Database>>,
 ) -> StatusCode {
     info!("sending tx data {:?}", time_update);
+    let conn = db
+        .lock()
+        .await
+        .connect()
+        .expect("could not connect to turso");
     conn.execute(
         "INSERT INTO times (time) VALUES (:time)",
         libsql::named_params! { ":time": time_update.time.clone() },
@@ -141,7 +147,12 @@ async fn update_meeting_handler(
     StatusCode::CREATED
 }
 
-async fn meeting_info_handler(conn: Connection) -> Json<MeetingInfoJson> {
+async fn meeting_info_handler(db: Arc<Mutex<Database>>) -> Json<MeetingInfoJson> {
+    let conn = db
+        .lock()
+        .await
+        .connect()
+        .expect("could not connect to turso");
     let mut data = conn
         .query("SELECT * FROM times ORDER BY ID DESC LIMIT 1;", ())
         .await
