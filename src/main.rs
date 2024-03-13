@@ -1,5 +1,4 @@
 mod auth;
-mod cors;
 
 use crate::auth::Claims;
 use axum::handler::HandlerWithoutStateExt;
