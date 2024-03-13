@@ -1,0 +1,4 @@
+CREATE TABLE projects (
+    ID INTEGER PRIMARY KEY AUTOINCREMENT,
+    project TEXT
+);

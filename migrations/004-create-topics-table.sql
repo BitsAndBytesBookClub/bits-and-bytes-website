@@ -1,0 +1,4 @@
+CREATE TABLE topics (
+    ID INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic TEXT
+);

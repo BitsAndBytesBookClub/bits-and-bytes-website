@@ -1,0 +1,4 @@
+CREATE TABLE chapters (
+    ID INTEGER PRIMARY KEY AUTOINCREMENT,
+    chapter TEXT
+);

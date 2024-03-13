@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bits and Bytes Book Club</title>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 
@@ -14,34 +15,65 @@
     <h1>Bits and Bytes Book Club</h1>
 </header>
 <main>
-    <section id="info">
-        <h2>Next Meeting</h2>
-        <p><strong>Date:</strong> March 10th, 2024</p>
-        <p><strong>Time:</strong> 11:00 AM CST</p>
-        <p><strong>Location:</strong> <a href="https://discord.gg/6DBmcP76">[Dev House discord!]</a> <br>Please
-            select the
-            bookclub role and join us in #book-club-discussion!</p>
-    </section>
-    <section id="reading">
-        <h2>Book</h2>
-        <p><strong>Designing Data Intensive Applications by Martin Kleppmann</strong></p>
-    </section>
-    <section id="reading">
-        <h2>Reading Assignment</h2>
-        <p><strong>No reading! This is our introductory meeting.</strong></p>
-    </section>
-    <section id="project">
-        <h2>Discussion Topic</h2>
-        <p><strong>Let's start the conversation, meet eachother and begin brain storming!</strong></p>
-    </section>
-    <section id="project">
-        <h2>Optional Project</h2>
-        <p>No project. This will be our first meeting!</p>
-    </section>
+    <div x-data="meetingInfo()">
+        <section id="info">
+            <h2>Next Meeting</h2>
+            <p><strong>Date: </strong><span x-text="day"></span></p>
+            <p><strong>Time: </strong><span x-text="time"></span></p>
+            <p><strong>Location:</strong> <a href="https://discord.gg/6DBmcP76">[Dev House discord!]</a> <br>Please
+                select the
+                bookclub role and join us in #book-club-discussion!</p>
+        </section>
+        <section id="reading">
+            <h2>Book</h2>
+            <p><strong>Designing Data Intensive Applications by Martin Kleppmann</strong></p>
+        </section>
+        <section id="reading">
+            <h2>Reading Assignment</h2>
+            <p><strong><span x-text="chapter"></span></strong></p>
+        </section>
+        <section id="project">
+            <h2>Discussion Topic</h2>
+            <p><strong><span x-text="topic"></span></strong></p>
+        </section>
+        <section id="project">
+            <h2>Optional Project</h2>
+            <p><strong><span x-text="project"></span></strong></p>
+        </section>
+    </div>
 </main>
 <footer>
     <p>Connect, Read, Discuss</p>
 </footer>
-</body>
 
+<script>
+    function meetingInfo() {
+        return {
+            time: localStorage.getItem('meetingTime') || fetch("/current/meeting_info").then((data) => data.json().then((d) => d.time)),
+            day: localStorage.getItem('meetingDay') || fetch("/current/meeting_info").then((data) => data.json().then((d) => d.day)),
+            chapter: localStorage.getItem('meetingChapter') || fetch("/current/meeting_info").then((data) => data.json().then((d) => d.chapter)),
+            topic: localStorage.getItem('meetingTopic') || fetch("/current/meeting_info").then((data) => data.json().then((d) => d.topic)),
+            project: localStorage.getItem('meetingProject') || fetch("/current/meeting_info").then((data) => data.json().then((d) => d.project)),
+            init() {
+                const eventSource = new EventSource("/events");
+                eventSource.onmessage = (event) => {
+                    console.log("Event received:", event.data);
+                    const [time, day, chapter, topic, project] = event.data.split("|");
+                    this.time = time;
+                    this.day = day;
+                    this.chapter = chapter;
+                    this.topic = topic;
+                    this.project = project;
+                    localStorage.setItem('meetingTime', this.time);
+                    localStorage.setItem('meetingDay', this.day);
+                    localStorage.setItem('meetingChapter', this.chapter);
+                    localStorage.setItem('meetingTopic', this.topic);
+                    localStorage.setItem('meetingProject', this.project);
+                };
+            }
+        }
+    }
+</script>
+
+</body>
 </html>

@@ -1,20 +1,87 @@
-use axum::handler::{HandlerService, HandlerWithoutStateExt};
+mod auth;
+
+use crate::auth::Claims;
+use axum::handler::HandlerWithoutStateExt;
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use axum::{routing::get, Router};
+use axum::response::sse::Event;
+use axum::response::Sse;
+use axum::routing::post;
+use axum::{routing::get, Json, Router};
+use futures::Stream;
+use libsql::{Builder, Connection};
+use serde::{Deserialize, Serialize};
+use std::env;
 use tokio::signal;
+use tokio::sync::broadcast;
+use tokio_stream::StreamExt;
 use tower_http::services::ServeDir;
-use tower_http::set_status::SetStatus;
 use tracing::info;
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct MeetingInfoJson {
+    time: String,
+    day: String,
+    chapter: String,
+    topic: String,
+    project: String,
+}
+
+impl MeetingInfoJson {
+    fn concatenated(&self) -> String {
+        format!(
+            "{}|{}|{}|{}|{}",
+            &self.time, &self.day, &self.chapter, &self.topic, &self.project
+        )
+    }
+}
 
 #[tokio::main]
 async fn main() {
+    // set up channels for sending data
+    let (tx, _rx) = broadcast::channel::<MeetingInfoJson>(10);
+
     tracing_subscriber::fmt::init();
 
-    let not_found_svc = not_found().await.into_service();
-    let root = ServeDir::new("assets").not_found_service(not_found_svc);
+    // set up turso SQLite database connection
+    let url = env::var("LIBSQL_URL").expect("LIBSQL_URL must be set");
+    let token = env::var("LIBSQL_AUTH_TOKEN").unwrap_or_default();
 
-    let app = Router::new().nest_service("/", root.clone());
+    let db = Builder::new_remote_replica("local.db", url, token)
+        .build()
+        .await
+        .unwrap();
+    let conn = db.connect().unwrap();
+
+    let not_found_svc = not_found().await.into_service();
+    let root = ServeDir::new("assets").not_found_service(not_found_svc.clone());
+
+    let app = Router::new()
+        .nest_service("/", root.clone())
+        .route(
+            "/events",
+            get({
+                let tx_clone = tx.clone();
+                move || {
+                    let rx = tx_clone.subscribe();
+                    sse_handler(rx)
+                }
+            }),
+        )
+        .route(
+            "/update/meeting_info",
+            post({
+                let tx_clone = tx.clone();
+                let conn_clone = conn.clone();
+                move |claims: Claims, Json(payload): Json<MeetingInfoJson>| {
+                    update_meeting_handler(claims, payload, tx_clone.clone(), conn_clone.clone())
+                }
+            }),
+        )
+        .route(
+            "/current/meeting_info",
+            get(move || meeting_info_handler(conn.clone())),
+        )
+        .fallback_service(not_found_svc);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     info!("starting web server on port 3000...");
@@ -22,6 +89,121 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .unwrap();
+}
+
+async fn not_found() -> (StatusCode, &'static str) {
+    (StatusCode::NOT_FOUND, "Not found")
+}
+
+async fn update_meeting_handler(
+    _claims: Claims,
+    time_update: MeetingInfoJson,
+    tx: broadcast::Sender<MeetingInfoJson>,
+    conn: Connection,
+) -> StatusCode {
+    info!("sending tx data {:?}", time_update);
+    conn.execute(
+        "INSERT INTO times (time) VALUES (:time)",
+        libsql::named_params! { ":time": time_update.time.clone() },
+    )
+    .await
+    .unwrap();
+
+    conn.execute(
+        "INSERT INTO days (day) VALUES (:day)",
+        libsql::named_params! { ":day": time_update.day.clone() },
+    )
+    .await
+    .unwrap();
+
+    conn.execute(
+        "INSERT INTO chapters (chapter) VALUES (:chapter)",
+        libsql::named_params! { ":chapter": time_update.chapter.clone() },
+    )
+    .await
+    .unwrap();
+
+    conn.execute(
+        "INSERT INTO topics (topic) VALUES (:topic)",
+        libsql::named_params! { ":topic": time_update.day.clone() },
+    )
+    .await
+    .unwrap();
+
+    conn.execute(
+        "INSERT INTO projects (project) VALUES (:project)",
+        libsql::named_params! { ":project": time_update.day.clone() },
+    )
+    .await
+    .unwrap();
+
+    let _ = tx
+        .send(time_update)
+        .expect("could not send payload via channel");
+
+    StatusCode::CREATED
+}
+
+async fn meeting_info_handler(conn: Connection) -> Json<MeetingInfoJson> {
+    let mut data = conn
+        .query("SELECT * FROM times ORDER BY ID DESC LIMIT 1;", ())
+        .await
+        .unwrap();
+    let rows = data.next().await.unwrap().unwrap();
+    let time = rows.get_str(1).unwrap().to_string();
+
+    let mut data = conn
+        .query("SELECT * FROM days ORDER BY ID DESC LIMIT 1;", ())
+        .await
+        .unwrap();
+    let rows = data.next().await.unwrap().unwrap();
+    let day = rows.get_str(1).unwrap().to_string();
+
+    let mut data = conn
+        .query("SELECT * FROM chapters ORDER BY ID DESC LIMIT 1;", ())
+        .await
+        .unwrap();
+    let rows = data.next().await.unwrap().unwrap();
+    let reading_assignment = rows.get_str(1).unwrap().to_string();
+
+    let mut data = conn
+        .query("SELECT * FROM topics ORDER BY ID DESC LIMIT 1;", ())
+        .await
+        .unwrap();
+    let rows = data.next().await.unwrap().unwrap();
+    let discussion_topic = rows.get_str(1).unwrap().to_string();
+
+    let mut data = conn
+        .query("SELECT * FROM projects ORDER BY ID DESC LIMIT 1;", ())
+        .await
+        .unwrap();
+    let rows = data.next().await.unwrap().unwrap();
+    let optional_projects = rows.get_str(1).unwrap().to_string();
+
+    Json(MeetingInfoJson {
+        time,
+        day,
+        chapter: reading_assignment,
+        topic: discussion_topic,
+        project: optional_projects,
+    })
+}
+
+async fn sse_handler(
+    rx: broadcast::Receiver<MeetingInfoJson>,
+) -> Sse<impl Stream<Item = Result<Event, String>> + Send + 'static> {
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).map(|result| match result {
+        Ok(msg) => {
+            info!("receiving rx data {:?}", msg.clone());
+            Ok(Event::default().data(msg.concatenated()))
+        }
+        Err(e) => {
+            eprintln!("broadcast channel error: {:?}", e);
+            Err("error with data".to_string())
+        }
+    });
+
+    Sse::new(stream)
 }
 
 async fn shutdown_signal() {
@@ -46,8 +228,4 @@ async fn shutdown_signal() {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
-}
-
-async fn not_found() -> (StatusCode, &'static str) {
-    (StatusCode::NOT_FOUND, "Not found")
 }
