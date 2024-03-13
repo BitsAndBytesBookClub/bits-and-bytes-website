@@ -66,7 +66,7 @@
                 return d.topic;
             })),
             project: localStorage.getItem('meetingProject') || fetch("/current/meeting_info").then((data) => data.json().then((d) => {
-                localStorage.setItem('meetingTopic', d.project);
+                localStorage.setItem('meetingProject', d.project);
                 return d.project;
             })),
             init() {
