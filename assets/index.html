@@ -70,7 +70,7 @@
                 return d.project;
             })),
             init() {
-                const eventSource = new EventSource("https://bits-and-bytes-website.onrender.com/events");
+                const eventSource = new EventSource("/events");
                 eventSource.onmessage = (event) => {
                     console.log("Event received:", event.data);
                     const [time, day, chapter, topic, project] = event.data.split("|");

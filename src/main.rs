@@ -1,8 +1,10 @@
 mod auth;
 
 use crate::auth::Claims;
+use axum::extract::MatchedPath;
 use axum::handler::HandlerWithoutStateExt;
-use axum::http::{HeaderValue, StatusCode};
+use axum::http::header::CONTENT_TYPE;
+use axum::http::{Request, StatusCode};
 use axum::response::sse::Event;
 use axum::response::Sse;
 use axum::routing::post;
@@ -17,7 +19,10 @@ use tokio::sync::{broadcast, Mutex};
 use tokio_stream::StreamExt;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
-use tracing::{info, warn};
+use tower_http::trace::TraceLayer;
+use tracing::{debug, info_span, warn};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct MeetingInfoJson {
@@ -39,10 +44,17 @@ impl MeetingInfoJson {
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "bits-and-bytes-web=debug,tower_http=debug,axum::rejection=trace".into()
+            }),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
     // set up channels for sending data
     let (tx, _rx) = broadcast::channel::<MeetingInfoJson>(10);
-
-    tracing_subscriber::fmt::init();
 
     // set up turso SQLite database connection
     let url = env::var("LIBSQL_URL").expect("LIBSQL_URL must be set");
@@ -54,7 +66,7 @@ async fn main() {
         .map_err(|err| warn!("{}", err))
         .expect("cannot build db conn");
     let shared_db = Arc::new(Mutex::new(db));
-    info!("database remote connection established...");
+    debug!("database remote connection established...");
 
     let not_found_svc = not_found().await.into_service();
     let root = ServeDir::new("assets").not_found_service(not_found_svc.clone());
@@ -64,7 +76,6 @@ async fn main() {
         .route(
             "/events",
             get({
-                info!("sending GET to /events");
                 let tx_clone = tx.clone();
                 move || {
                     let rx = tx_clone.subscribe();
@@ -75,7 +86,6 @@ async fn main() {
         .route(
             "/update/meeting_info",
             post({
-                info!("sending POST to /update/meeting_info");
                 let tx_clone = tx.clone();
                 let db_clone = shared_db.clone();
                 move |claims: Claims, Json(payload): Json<MeetingInfoJson>| {
@@ -89,19 +99,29 @@ async fn main() {
         )
         .layer(
             CorsLayer::new()
-                .allow_origin(
-                    "https://www.bitsandbytesbooks.com"
-                        .parse::<HeaderValue>()
-                        .map_err(|err| warn!("{}", err))
-                        .unwrap(),
-                )
+                .allow_origin(Any)
                 .allow_methods(Any)
-                .allow_headers(Any),
+                .allow_headers(vec![CONTENT_TYPE]),
+        )
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                let matched_path = request
+                    .extensions()
+                    .get::<MatchedPath>()
+                    .map(MatchedPath::as_str);
+
+                info_span!(
+                    "http_request",
+                    method = ?request.method(),
+                    matched_path,
+                    some_other_field = tracing::field::Empty,
+                )
+            }),
         )
         .fallback_service(not_found_svc);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    info!("starting web server on port 3000...");
+    debug!("starting web server on port 3000...");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
@@ -118,64 +138,66 @@ async fn update_meeting_handler(
     time_update: MeetingInfoJson,
     tx: broadcast::Sender<MeetingInfoJson>,
     db: Arc<Mutex<Database>>,
-) -> StatusCode {
-    info!("sending tx data {:?}", time_update);
-    let conn = db
-        .lock()
-        .await
-        .connect()
-        .map_err(|err| warn!("{}", err))
-        .expect("could not connect to turso");
+) -> Result<StatusCode, (StatusCode, String)> {
+    debug!("sending POST to /update/meeting_info");
+    debug!("sending tx data {:?}", time_update);
 
-    conn.execute(
-        "INSERT INTO times (time) VALUES (:time)",
-        libsql::named_params! { ":time": time_update.time.clone() },
-    )
-    .await
-    .map_err(|err| warn!("{}", err))
-    .unwrap();
+    let conn = db.lock().await.connect().map_err(|err| {
+        warn!("{}", err);
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Database connection error: {}", err),
+        )
+    })?;
 
-    conn.execute(
-        "INSERT INTO days (day) VALUES (:day)",
-        libsql::named_params! { ":day": time_update.day.clone() },
-    )
-    .await
-    .map_err(|err| warn!("{}", err))
-    .unwrap();
+    let queries = vec![
+        (
+            "INSERT INTO times (time) VALUES (:value)",
+            time_update.time.clone(),
+        ),
+        (
+            "INSERT INTO days (day) VALUES (:value)",
+            time_update.day.clone(),
+        ),
+        (
+            "INSERT INTO chapters (chapter) VALUES (:value)",
+            time_update.chapter.clone(),
+        ),
+        (
+            "INSERT INTO topics (topic) VALUES (:value)",
+            time_update.topic.clone(),
+        ),
+        (
+            "INSERT INTO projects (project) VALUES (:value)",
+            time_update.project.clone(),
+        ),
+    ];
 
-    conn.execute(
-        "INSERT INTO chapters (chapter) VALUES (:chapter)",
-        libsql::named_params! { ":chapter": time_update.chapter.clone() },
-    )
-    .await
-    .map_err(|err| warn!("{}", err))
-    .unwrap();
+    for (query, param) in queries {
+        conn.execute(query, libsql::named_params! { ":value": param })
+            .await
+            .map_err(|err| {
+                warn!("{}", err);
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("Database execution error: {}", err),
+                )
+            })?;
+    }
 
-    conn.execute(
-        "INSERT INTO topics (topic) VALUES (:topic)",
-        libsql::named_params! { ":topic": time_update.topic.clone() },
-    )
-    .await
-    .map_err(|err| warn!("{}", err))
-    .unwrap();
+    tx.send(time_update).map_err(|err| {
+        warn!("{}", err);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Broadcast error: {}", err),
+        )
+    })?;
 
-    conn.execute(
-        "INSERT INTO projects (project) VALUES (:project)",
-        libsql::named_params! { ":project": time_update.project.clone() },
-    )
-    .await
-    .map_err(|err| warn!("{}", err))
-    .unwrap();
-
-    let _ = tx
-        .send(time_update)
-        .map_err(|err| warn!("{}", err))
-        .expect("could not send payload via channel");
-
-    StatusCode::CREATED
+    Ok(StatusCode::CREATED)
 }
 
 async fn meeting_info_handler(db: Arc<Mutex<Database>>) -> Json<MeetingInfoJson> {
+    debug!("sending GET to meeting_info");
     let conn = db
         .lock()
         .await
@@ -234,9 +256,10 @@ async fn meeting_info_handler(db: Arc<Mutex<Database>>) -> Json<MeetingInfoJson>
 async fn sse_handler(
     rx: broadcast::Receiver<MeetingInfoJson>,
 ) -> Sse<impl Stream<Item = Result<Event, String>> + Send + 'static> {
+    debug!("sending GET to /events");
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx).map(|result| match result {
         Ok(msg) => {
-            info!("receiving rx data {:?}", msg.clone());
+            debug!("receiving rx data {:?}", msg.clone());
             Ok(Event::default().data(msg.concatenated()))
         }
         Err(e) => {

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::error::Error;
 use std::str::FromStr;
-use tracing::warn;
+use tracing::{info, warn};
 
 pub enum AuthError {
     MissingToken,
@@ -51,6 +51,7 @@ where
     type Rejection = AuthError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        info!("authenticating user...");
         let TypedHeader(Authorization(bearer)) = parts
             .extract::<TypedHeader<Authorization<Bearer>>>()
             .await
@@ -65,6 +66,7 @@ where
 }
 
 async fn parse_jwt(token: &str) -> Result<TokenData<Claims>, Box<dyn Error>> {
+    info!("parsing token");
     let authority = std::env::var("AUTH0_ISSUER").unwrap();
     let jwks = fetch_jwks(&format!("{}.well-known/jwks.json", authority.as_str()))
         .await
@@ -89,6 +91,7 @@ async fn parse_jwt(token: &str) -> Result<TokenData<Claims>, Box<dyn Error>> {
                 validation.set_issuer(&["https://dev-11u3ws3u.us.auth0.com/"]);
                 validation.validate_exp = false;
                 let decoded_token = decode::<Claims>(token, &decoding_key, &validation).unwrap();
+                info!("token decoding successful");
                 Ok(decoded_token)
             }
             _ => unreachable!("this should be a RSA"),
